@@ -1,0 +1,209 @@
+# Azure DevOps Pipeline for ADO Game React Application
+# This pipeline builds the React app and deploys it to a specified server
+
+trigger:
+- main
+- develop
+
+pool:
+  name: 'grenoble'
+
+parameters:
+- name: targetServer
+  displayName: 'Target Server'
+  type: string
+  default: ''
+  
+- name: deploymentPath
+  displayName: 'Deployment Path'
+  type: string
+  default: '/var/www/ado-game'
+  
+- name: serverUser
+  displayName: 'Server Username'
+  type: string
+  default: 'deploy'
+  
+- name: serverPort
+  displayName: 'SSH Port'
+  type: number
+  default: 22
+
+variables:
+  nodeVersion: '18.x'
+  buildConfiguration: 'production'
+  artifactName: 'ado-game-build'
+
+stages:
+- stage: Build
+  displayName: 'Build Stage'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build React Application'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Install Node.js'
+      inputs:
+        versionSpec: '$(nodeVersion)'
+        
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | ado-game-app/package-lock.json'
+        restoreKeys: |
+          npm | "$(Agent.OS)"
+        path: 'ado-game-app/node_modules'
+        
+    - script: |
+        npm ci
+      displayName: 'Install Dependencies'
+      
+    - script: |
+        npm run lint
+      displayName: 'Run Linting'
+      continueOnError: true
+      
+    - script: |
+        
+        npm run build
+      displayName: 'Build Application'
+      env:
+        CI: true
+        
+    - task: ArchiveFiles@2
+      displayName: 'Archive Build Files'
+      inputs:
+        rootFolderOrFile: 'ado-game-app/dist'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(artifactName).zip'
+        replaceExistingArchive: true
+        
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Build Artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: '$(artifactName)'
+        publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: 'Deploy Stage'
+  dependsOn: Build
+  condition: and(succeeded(), ne('${{ parameters.targetServer }}', ''))
+  jobs:
+  - deployment: DeployJob
+    displayName: 'Deploy to Server'
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: '$(artifactName)'
+            displayName: 'Download Build Artifacts'
+            
+          - task: ExtractFiles@1
+            displayName: 'Extract Build Files'
+            inputs:
+              archiveFilePatterns: '$(Pipeline.Workspace)/$(artifactName)/$(artifactName).zip'
+              destinationFolder: '$(Pipeline.Workspace)/extracted'
+              cleanDestinationFolder: true
+              
+          - task: CopyFilesOverSSH@0
+            displayName: 'Copy Files to Server'
+            inputs:
+              sshEndpoint: 'deployment-server'
+              sourceFolder: '$(Pipeline.Workspace)/extracted'
+              contents: '**'
+              targetFolder: '${{ parameters.deploymentPath }}'
+              cleanTargetFolder: true
+              overwrite: true
+              failOnEmptySource: true
+              
+          - task: SSH@0
+            displayName: 'Set Permissions and Restart Services'
+            inputs:
+              sshEndpoint: 'deployment-server'
+              runOptions: 'inline'
+              inline: |
+                # Set proper permissions
+                sudo chown -R www-data:www-data ${{ parameters.deploymentPath }}
+                sudo chmod -R 755 ${{ parameters.deploymentPath }}
+                
+                # Create nginx configuration if it doesn't exist
+                if [ ! -f /etc/nginx/sites-available/ado-game ]; then
+                  sudo tee /etc/nginx/sites-available/ado-game > /dev/null <<EOF
+                server {
+                    listen 80;
+                    server_name _;
+                    root ${{ parameters.deploymentPath }};
+                    index index.html;
+                    
+                    location / {
+                        try_files \$uri \$uri/ /index.html;
+                    }
+                    
+                    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+                        expires 1y;
+                        add_header Cache-Control "public, immutable";
+                    }
+                }
+                EOF
+                  
+                  # Enable the site
+                  sudo ln -sf /etc/nginx/sites-available/ado-game /etc/nginx/sites-enabled/
+                  sudo rm -f /etc/nginx/sites-enabled/default
+                fi
+                
+                # Test nginx configuration and reload
+                sudo nginx -t && sudo systemctl reload nginx
+                
+                echo "Deployment completed successfully!"
+              readyTimeout: '20000'
+
+- stage: HealthCheck
+  displayName: 'Health Check'
+  dependsOn: Deploy
+  condition: and(succeeded(), ne('${{ parameters.targetServer }}', ''))
+  jobs:
+  - job: HealthCheckJob
+    displayName: 'Verify Deployment'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Check Application Health'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $maxAttempts = 5
+          $attempt = 1
+          $success = $false
+          
+          while ($attempt -le $maxAttempts -and -not $success) {
+              try {
+                  Write-Host "Health check attempt $attempt of $maxAttempts"
+                  $response = Invoke-WebRequest -Uri "http://${{ parameters.targetServer }}" -TimeoutSec 30 -UseBasicParsing
+                  
+                  if ($response.StatusCode -eq 200) {
+                      Write-Host "✅ Application is responding successfully!"
+                      $success = $true
+                  } else {
+                      Write-Host "❌ Unexpected status code: $($response.StatusCode)"
+                  }
+              }
+              catch {
+                  Write-Host "❌ Health check failed: $($_.Exception.Message)"
+                  if ($attempt -eq $maxAttempts) {
+                      Write-Host "##vso[task.logissue type=error]Health check failed after $maxAttempts attempts"
+                      exit 1
+                  }
+              }
+              
+              if (-not $success) {
+                  Start-Sleep -Seconds 10
+                  $attempt++
+              }
+          }
+          
+          if ($success) {
+              Write-Host "🎉 Deployment verification completed successfully!"
+          }
