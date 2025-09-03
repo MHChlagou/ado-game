@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   ado-game:
-    image: ado-game:latest
+    image: ${IMAGE_NAME:-ado-game}:${IMAGE_TAG:-latest}
     container_name: ado-game-app
     ports:
       - "80:80"

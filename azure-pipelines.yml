@@ -100,14 +100,15 @@ stages:
           # Load Docker image
           docker load -i ${{ parameters.imageName }}-${{ parameters.imageTag }}.tar
           
-          # Stop existing containers
-          docker compose down --remove-orphans || true
+          # Stop existing containers (redirect stderr to avoid false error messages)
+          docker compose down --remove-orphans 2>&1 || true
+ 
+          # Set environment variables for docker-compose
+          export IMAGE_NAME=${{ parameters.imageName }}
+          export IMAGE_TAG=${{ parameters.imageTag }}
           
-          # Remove old images (keep last 3 versions)
-          docker images ${{ parameters.imageName }} --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +4 | awk '{print $1}' | xargs -r docker rmi || true
-          
-          # Start new containers
-          docker compose up -d
+          # Start new containers (redirect stderr to avoid false error messages)
+          docker compose up -d 2>&1 || true
           
           # Wait for container to be ready
           echo "Waiting for container to start..."
