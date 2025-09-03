@@ -1,5 +1,5 @@
 # Azure DevOps Pipeline for ADO Game React Application
-# This pipeline builds the React app and deploys it to a specified server
+# This pipeline builds and deploys the React app using Docker
 
 trigger:
 - main
@@ -7,31 +7,24 @@ trigger:
 
 pool:
   name: 'grenoble'
+  demands:
+  - agent.name -equals MyLinuxAgent
 
 parameters:
-- name: targetServer
-  displayName: 'Target Server'
-  type: string
-  default: ''
-  
 - name: deploymentPath
   displayName: 'Deployment Path'
   type: string
-  default: '/var/www/ado-game'
-  
-- name: serverUser
-  displayName: 'Server Username'
+  default: '/opt/ado-game'
+- name: imageName
+  displayName: 'Docker Image Name'
   type: string
-  default: 'deploy'
-  
-- name: serverPort
-  displayName: 'SSH Port'
-  type: number
-  default: 22
+  default: 'ado-game'
+- name: imageTag
+  displayName: 'Docker Image Tag'
+  type: string
+  default: '$(Build.BuildNumber)'
 
 variables:
-  nodeVersion: '18.x'
-  buildConfiguration: 'production'
   artifactName: 'ado-game-build'
 
 stages:
@@ -39,48 +32,18 @@ stages:
   displayName: 'Build Stage'
   jobs:
   - job: BuildJob
-    displayName: 'Build React Application'
+    displayName: 'Build Docker Image'
     steps:
-    - task: NodeTool@0
-      displayName: 'Install Node.js'
-      inputs:
-        versionSpec: '$(nodeVersion)'
-        
-    - task: Cache@2
-      displayName: 'Cache node_modules'
-      inputs:
-        key: 'npm | "$(Agent.OS)" | ado-game-app/package-lock.json'
-        restoreKeys: |
-          npm | "$(Agent.OS)"
-        path: 'ado-game-app/node_modules'
-        
     - script: |
-        npm ci
-      displayName: 'Install Dependencies'
+        docker build -t ${{ parameters.imageName }}:${{ parameters.imageTag }} -t ${{ parameters.imageName }}:latest .
+      displayName: 'Build Docker Image'
       
     - script: |
-        npm run lint
-      displayName: 'Run Linting'
-      continueOnError: true
-      
-    - script: |
-        
-        npm run build
-      displayName: 'Build Application'
-      env:
-        CI: true
-        
-    - task: ArchiveFiles@2
-      displayName: 'Archive Build Files'
-      inputs:
-        rootFolderOrFile: 'ado-game-app/dist'
-        includeRootFolder: false
-        archiveType: 'zip'
-        archiveFile: '$(Build.ArtifactStagingDirectory)/$(artifactName).zip'
-        replaceExistingArchive: true
+        docker save ${{ parameters.imageName }}:${{ parameters.imageTag }} -o $(Build.ArtifactStagingDirectory)/${{ parameters.imageName }}-${{ parameters.imageTag }}.tar
+      displayName: 'Save Docker Image'
         
     - task: PublishBuildArtifacts@1
-      displayName: 'Publish Build Artifacts'
+      displayName: 'Publish Docker Image Artifact'
       inputs:
         pathToPublish: '$(Build.ArtifactStagingDirectory)'
         artifactName: '$(artifactName)'
@@ -89,121 +52,125 @@ stages:
 - stage: Deploy
   displayName: 'Deploy Stage'
   dependsOn: Build
-  condition: and(succeeded(), ne('${{ parameters.targetServer }}', ''))
+  condition: succeeded()
   jobs:
-  - deployment: DeployJob
-    displayName: 'Deploy to Server'
-    environment: 'production'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - download: current
-            artifact: '$(artifactName)'
-            displayName: 'Download Build Artifacts'
-            
-          - task: ExtractFiles@1
-            displayName: 'Extract Build Files'
-            inputs:
-              archiveFilePatterns: '$(Pipeline.Workspace)/$(artifactName)/$(artifactName).zip'
-              destinationFolder: '$(Pipeline.Workspace)/extracted'
-              cleanDestinationFolder: true
-              
-          - task: CopyFilesOverSSH@0
-            displayName: 'Copy Files to Server'
-            inputs:
-              sshEndpoint: 'deployment-server'
-              sourceFolder: '$(Pipeline.Workspace)/extracted'
-              contents: '**'
-              targetFolder: '${{ parameters.deploymentPath }}'
-              cleanTargetFolder: true
-              overwrite: true
-              failOnEmptySource: true
-              
-          - task: SSH@0
-            displayName: 'Set Permissions and Restart Services'
-            inputs:
-              sshEndpoint: 'deployment-server'
-              runOptions: 'inline'
-              inline: |
-                # Set proper permissions
-                sudo chown -R www-data:www-data ${{ parameters.deploymentPath }}
-                sudo chmod -R 755 ${{ parameters.deploymentPath }}
-                
-                # Create nginx configuration if it doesn't exist
-                if [ ! -f /etc/nginx/sites-available/ado-game ]; then
-                  sudo tee /etc/nginx/sites-available/ado-game > /dev/null <<EOF
-                server {
-                    listen 80;
-                    server_name _;
-                    root ${{ parameters.deploymentPath }};
-                    index index.html;
-                    
-                    location / {
-                        try_files \$uri \$uri/ /index.html;
-                    }
-                    
-                    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-                        expires 1y;
-                        add_header Cache-Control "public, immutable";
-                    }
-                }
-                EOF
-                  
-                  # Enable the site
-                  sudo ln -sf /etc/nginx/sites-available/ado-game /etc/nginx/sites-enabled/
-                  sudo rm -f /etc/nginx/sites-enabled/default
-                fi
-                
-                # Test nginx configuration and reload
-                sudo nginx -t && sudo systemctl reload nginx
-                
-                echo "Deployment completed successfully!"
-              readyTimeout: '20000'
+  - job: DeployJob
+    displayName: 'Deploy with Docker Compose'
+    steps:
+    - task: DownloadBuildArtifacts@0
+      displayName: 'Download Build Artifacts'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: '$(artifactName)'
+        downloadPath: '$(System.ArtifactsDirectory)'
+        
+    - task: SSH@0
+      displayName: 'Create Deployment Directory'
+      inputs:
+        sshEndpoint: 'deployment-server'
+        runOptions: 'inline'
+        inline: |
+          mkdir -p ${{ parameters.deploymentPath }}
+        
+    - task: CopyFilesOverSSH@0
+      displayName: 'Copy Docker Compose and Image to Remote Server'
+      inputs:
+        sshEndpoint: 'deployment-server'
+        sourceFolder: '$(Build.SourcesDirectory)'
+        contents: 'docker-compose.yml'
+        targetFolder: '${{ parameters.deploymentPath }}'
+        
+    - task: CopyFilesOverSSH@0
+      displayName: 'Copy Docker Image to Remote Server'
+      inputs:
+        sshEndpoint: 'deployment-server'
+        sourceFolder: '$(System.ArtifactsDirectory)/$(artifactName)'
+        contents: '*.tar'
+        targetFolder: '${{ parameters.deploymentPath }}'
+        
+    - task: SSH@0
+      displayName: 'Deploy with Docker Compose'
+      inputs:
+        sshEndpoint: 'deployment-server'
+        runOptions: 'inline'
+        inline: |
+          cd ${{ parameters.deploymentPath }}
+          
+          # Load Docker image
+          docker load -i ${{ parameters.imageName }}-${{ parameters.imageTag }}.tar
+          
+          # Stop existing containers
+          docker compose down --remove-orphans || true
+          
+          # Remove old images (keep last 3 versions)
+          docker images ${{ parameters.imageName }} --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +4 | awk '{print $1}' | xargs -r docker rmi || true
+          
+          # Start new containers
+          docker compose up -d
+          
+          # Wait for container to be ready
+          echo "Waiting for container to start..."
+          sleep 10
+          
+          # Check container status
+          docker compose ps
+          
+          echo "Deployment completed successfully!"
 
 - stage: HealthCheck
   displayName: 'Health Check'
   dependsOn: Deploy
-  condition: and(succeeded(), ne('${{ parameters.targetServer }}', ''))
+  condition: succeeded()
   jobs:
   - job: HealthCheckJob
     displayName: 'Verify Deployment'
     steps:
-    - task: PowerShell@2
+    - task: SSH@0
       displayName: 'Check Application Health'
       inputs:
-        targetType: 'inline'
-        script: |
-          $maxAttempts = 5
-          $attempt = 1
-          $success = $false
+        sshEndpoint: 'deployment-server'
+        runOptions: 'inline'
+        inline: |
+          # Health check using curl on remote server
+          maxAttempts=10
+          attempt=1
+          success=false
           
-          while ($attempt -le $maxAttempts -and -not $success) {
-              try {
-                  Write-Host "Health check attempt $attempt of $maxAttempts"
-                  $response = Invoke-WebRequest -Uri "http://${{ parameters.targetServer }}" -TimeoutSec 30 -UseBasicParsing
-                  
-                  if ($response.StatusCode -eq 200) {
-                      Write-Host "✅ Application is responding successfully!"
-                      $success = $true
-                  } else {
-                      Write-Host "❌ Unexpected status code: $($response.StatusCode)"
-                  }
-              }
-              catch {
-                  Write-Host "❌ Health check failed: $($_.Exception.Message)"
-                  if ($attempt -eq $maxAttempts) {
-                      Write-Host "##vso[task.logissue type=error]Health check failed after $maxAttempts attempts"
-                      exit 1
-                  }
-              }
+          while [ $attempt -le $maxAttempts ] && [ "$success" = false ]; do
+              echo "Health check attempt $attempt of $maxAttempts"
               
-              if (-not $success) {
-                  Start-Sleep -Seconds 10
-                  $attempt++
-              }
-          }
+              # Check container health first
+              if docker compose -f ${{ parameters.deploymentPath }}/docker-compose.yml ps | grep -q "Up"; then
+                  echo "Container is running, checking HTTP response..."
+                  
+                  if response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://localhost/"); then
+                      if [ "$response" = "200" ]; then
+                          echo "✅ Application is responding successfully!"
+                          success=true
+                      else
+                          echo "❌ Unexpected status code: $response"
+                      fi
+                  else
+                      echo "❌ Health check failed: curl command failed"
+                  fi
+              else
+                  echo "❌ Container is not running properly"
+              fi
+              
+              if [ "$success" = false ]; then
+                  if [ $attempt -eq $maxAttempts ]; then
+                      echo "Health check failed after $maxAttempts attempts"
+                      echo "Container logs:"
+                      docker compose -f ${{ parameters.deploymentPath }}/docker-compose.yml logs --tail=50
+                      exit 1
+                  fi
+                  sleep 15
+                  attempt=$((attempt + 1))
+              fi
+          done
           
-          if ($success) {
-              Write-Host "🎉 Deployment verification completed successfully!"
-          }
+          if [ "$success" = true ]; then
+              echo "🎉 Deployment verification completed successfully!"
+              echo "Application is available at: http://localhost"
+          fi
