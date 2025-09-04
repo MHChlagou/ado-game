@@ -29,7 +29,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart }) => {
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden">
+    <div className="min-h-screen relative">
       {/* Enhanced Background */}
       <div className="absolute inset-0">
         <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900"></div>
@@ -61,7 +61,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart }) => {
         />
       </div>
       
-      <div className="relative z-10 min-h-screen grid lg:grid-cols-2 gap-0">
+      <div className="relative z-10 min-h-screen pb-20 grid lg:grid-cols-2 gap-0">
         {/* Left Column - Content */}
         <div className="flex items-center justify-center p-8 lg:p-16">
           <div className="max-w-xl w-full">
@@ -290,19 +290,21 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart }) => {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 1.3, duration: 0.8 }}
-        className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20"
+        className="absolute bottom-6 left-0 right-0 z-20 px-4"
       >
-        <p className="text-xs text-gray-500 text-center">
-          Created by{' '}
-          <a
-            href="https://www.linkedin.com/in/chlagou-med-hedi/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-400 font-medium hover:text-blue-400 transition-colors duration-200"
-          >
-            Mohamed Hedi CHLAGOU
-          </a>
-        </p>
+        <div className="max-w-4xl mx-auto">
+          <p className="text-sm text-gray-400 text-center bg-black/20 backdrop-blur-sm rounded-lg py-2 px-4 border border-white/10">
+            Created by{' '}
+            <a
+              href="https://www.linkedin.com/in/chlagou-med-hedi/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 font-medium hover:text-blue-300 transition-colors duration-200 underline decoration-blue-400/50 hover:decoration-blue-300"
+            >
+              Mohamed Hedi CHLAGOU
+            </a>
+          </p>
+        </div>
       </motion.div>
     </div>
   );
