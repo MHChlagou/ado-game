@@ -1,8 +1,12 @@
 {
-  "name": "ado-game-app",
+  "name": "ado-game",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "author": {
+    "name": "Mohamed Hedi CHLAGOU",
+    "url": "https://www.linkedin.com/in/chlagou-med-hedi/"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

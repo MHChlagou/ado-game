@@ -284,6 +284,26 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart }) => {
           </div>
         </div>
       </div>
+      
+      {/* Author Footer */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1.3, duration: 0.8 }}
+        className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20"
+      >
+        <p className="text-xs text-gray-500 text-center">
+          Created by{' '}
+          <a
+            href="https://www.linkedin.com/in/chlagou-med-hedi/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gray-400 font-medium hover:text-blue-400 transition-colors duration-200"
+          >
+            Mohamed Hedi CHLAGOU
+          </a>
+        </p>
+      </motion.div>
     </div>
   );
 };

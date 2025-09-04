@@ -64,3 +64,13 @@ An interactive educational game designed to teach Azure DevOps Server (on-premis
 4. 🎨 UI/UX design and animations
 5. 🧪 Testing and user feedback
 6. 🚀 Deployment and distribution
+
+## 👨‍💻 Author
+
+**Mohamed Hedi CHLAGOU**
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/chlagou-med-hedi/)
+
+---
+
+*This interactive learning game is designed to make Azure DevOps Server administration engaging and accessible for all skill levels.*
